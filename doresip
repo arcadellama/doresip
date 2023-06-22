@@ -63,24 +63,24 @@ do_api() {
     printf 'Endpoint unset\n'; return 1
   fi
 
-	if ! _ret="$("$Curl_Bin" -s \
-  	  -o "$_response" \
-  	  -w '%{http_code}' \
-  	  -X "$_method" \
-  	  -H "Content-Type: application/json" \
-  	  -H "Authorization: Bearer $_do_token" \
-  	  -d "@$_data" \
-  	  "$DO_API/$_endpoint" 2>&1)"; then
-	  printf '%s error: %s\n' "$Curl_Bin" "$_ret"
-	  return 1
-	fi
+  if ! _ret="$("$Curl_Bin" -s \
+    -o "$_response" \
+    -w '%{http_code}' \
+    -X "$_method" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer $_do_token" \
+    -d "@$_data" \
+    "$DO_API/$_endpoint" 2>&1)"; then
+      printf '%s error: %s\n' "$Curl_Bin" "$_ret"
+      return 1
+  fi
 
-	if [ "$_ret" -ne "$_ret_ok" ]; then
-	  printf 'HTTP Error Code: %s\n' "$_ret"
-	  if [ -s "$_response" ]; then
-	    printf 'Response: %s\n' "$(cat "$_response")"
-	  fi
-	  return 1
+  if [ "$_ret" -ne "$_ret_ok" ]; then
+    printf 'HTTP Error Code: %s\n' "$_ret"
+    if [ -s "$_response" ]; then
+      printf 'Response: %s\n' "$(cat "$_response")"
+    fi
+    return 1
   fi
 
   cat "$_response"
@@ -230,12 +230,12 @@ EOF
     _completed=""
     while [ "$_completed" != "completed" ]; do
       _action_status=""
-	    if ! _action_status=$(\
-	      do_api "GET" "reserved_ips/$_res_ip/actions/$_action_id"\
-	      ); then
-	      >&2 printf 'Error getting unassign action status\n%s\n' "$_action_status"
-	      return 1
-	    fi
+    if ! _action_status=$(\
+      do_api "GET" "reserved_ips/$_res_ip/actions/$_action_id"\
+      ); then
+      >&2 printf 'Error getting unassign action status\n%s\n' "$_action_status"
+      return 1
+    fi
 
       _completed=""
       if ! _completed=$(printf %s\\n "$_action_status" \
@@ -278,12 +278,12 @@ EOF
     _completed=""
     while [ "$_completed" != "completed" ]; do
       _action_status=""
-	    if ! _action_status=$(\
-	      do_api "GET" "reserved_ips/$_res_ip/actions/$_action_id"\
-	      ); then
-	      >&2 printf 'Error getting assign action status\n%s\n' "$_action_status"
-	      return 1
-	    fi
+    if ! _action_status=$(\
+      do_api "GET" "reserved_ips/$_res_ip/actions/$_action_id"\
+      ); then
+      >&2 printf 'Error getting assign action status\n%s\n' "$_action_status"
+      return 1
+    fi
 
       _completed=""
       if ! _completed=$(printf %s\\n "$_action_status" \
