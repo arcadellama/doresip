@@ -86,7 +86,7 @@ do_api() {
   cat "$_response"
 }
 
-get_faithbridge_server() {
+server_api() {
   # Globals: SERVER_API_NAME
   _method="GET"
   _ret_ok=200
@@ -188,8 +188,8 @@ swap() {
   _swap_name="$(array_index "$_index" "$@")" || return 1
 
   _server_name=""
-  if ! _server_name=$(get_faithbridge_server); then
-    >&2 printf 'Unable to get Faithbridge server name\n%s\n' \
+  if ! _server_name=$(server_api); then
+    >&2 printf 'Unable to get server name\n%s\n' \
       "$_server_name"
     return 1
   fi
@@ -308,8 +308,8 @@ EOF
       return 1
     fi
 
-    if ! _server_name=$(get_faithbridge_server); then
-      printf 'Error getting Faithbridge server\n%s\n' "$_server_name"
+    if ! _server_name=$(server_api); then
+      printf 'Error getting server name\n%s\n' "$_server_name"
       return 1
     fi
 
