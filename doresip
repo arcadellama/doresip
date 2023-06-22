@@ -1,0 +1,354 @@
+#!/usr/bin/env sh
+
+DIGITALOCEAN_TOKEN="${DIGITALOCEAN_TOKEN:-}"
+SERVER_API_NAME="${SERVER_API_NAME:-}"
+DO_API="https://api.digitalocean.com/v2"
+Prgnam="doresip"
+Version="0.0.1"
+Debug_Mode="${Debug_Mode:-false}"
+Verbose_Mode="${Verbose_Mode:-false}"
+Curl_Bin="${Curl_Bin:-$(command -v curl)}"
+Jq_Bin="${Jq_Bin:-$(command -v jq)}"
+Defer=""
+
+usage() {
+  cat << EOF
+$Prgnam - $Version
+Usage: $Prgnam swap -c|--config=path/to/config
+EOF
+}
+
+defer() {
+  Defer="$*; ${Defer}"
+  if ! "$Debug_Mode"; then
+    # shellcheck disable=2064
+    trap "{ $Defer }" EXIT
+  fi
+}
+
+array_index() {
+  # Accepts: index, array
+  shift "$1"
+  if [ -z "$1" ]; then
+    >&2 printf 'Index out of bounds.\n'
+    return 1
+  fi
+  printf %s\\n "$1"
+}
+
+do_api() {
+  # Accepts: method, endpoint, data
+  # Globals: DIGITALOCEAN_TOKEN
+  _method="$1"
+  _endpoint="$2"
+  _data="${3:-}"
+
+  _response="$(mktemp)" || return 1
+  defer rm -rf "$_response"
+
+  if ! _do_token="${DIGITALOCEAN_TOKEN:-$(getconfig DIGITALOCEAN_TOKEN)}"; then
+    printf 'DIGITALOCEAN_TOKEN unset\n'; return 1
+  fi
+
+  >&3 printf 'DIGITALOCEAN_TOKEN=%s\n' "$_do_token"
+
+  case "$_method" in
+    GET|PUT) _ret_ok=200 ;;
+    POST) _ret_ok=201 ;;
+    PATCH|DELETE) _ret_ok=204 ;;
+    *) printf 'Invalid method\n'; return 1 ;;
+  esac
+
+  if [ -z "$_endpoint" ]; then
+    printf 'Endpoint unset\n'; return 1
+  fi
+
+	if ! _ret="$("$Curl_Bin" -s \
+  	  -o "$_response" \
+  	  -w '%{http_code}' \
+  	  -X "$_method" \
+  	  -H "Content-Type: application/json" \
+  	  -H "Authorization: Bearer $_do_token" \
+  	  -d "@$_data" \
+  	  "$DO_API/$_endpoint" 2>&1)"; then
+	  printf '%s error: %s\n' "$Curl_Bin" "$_ret"
+	  return 1
+	fi
+
+	if [ "$_ret" -ne "$_ret_ok" ]; then
+	  printf 'HTTP Error Code: %s\n' "$_ret"
+	  if [ -s "$_response" ]; then
+	    printf 'Response: %s\n' "$(cat "$_response")"
+	  fi
+	  return 1
+  fi
+
+  cat "$_response"
+}
+
+get_faithbridge_server() {
+  # Globals: SERVER_API_NAME
+  _method="GET"
+  _ret_ok=200
+  _response="$(mktemp)" || return 1
+  defer rm -rf "$_response"
+
+  if ! _server_api_name="${SERVER_API_NAME:-$(getconfig SERVER_API_NAME)}"; then
+    printf 'SERVER_API_NAME unset\n'; return 1
+  fi
+
+  >&3 printf 'SERVER_API_NAME=%s\n' "$_do_token"
+
+  if ! _ret="$("$Curl_Bin" -s \
+    -o "$_response" \
+    -w '%{http_code}' \
+    -X "$_method" \
+    "$_server_api_name" 2>&1)"; then
+    printf '%s error: %s\n' "$Curl_Bin" "$_ret"
+    return 1
+  fi
+
+  if [ "$_ret" -ne "$_ret_ok" ]; then
+    printf 'HTTP Error Code: %s\n' "$_ret"
+    if [ -s "$_response" ]; then
+      printf 'Response: %s\n' "$(cat "$_response")"
+    fi
+    return 1
+  fi
+
+  cat "$_response"
+}
+
+getconfig() {
+  # Accepts: key
+  # Globals: Config_File
+  # Returns: value
+  _config="${Config_File:-$(getconfigfile)}"
+  [ -n "$_config" ] || return 1
+  while read -r line; do
+    case "$line" in
+      \#*) continue ;;
+      "$1"=*) printf %s\\n "${line#*=}" | tr -d '"'; return ;;
+      *) continue ;;
+    esac
+  done < "$_config"
+  >&3 printf 'Unable to get config value for key: %s\n' "$1"
+  return 1
+}
+
+getconfigfile() {
+  for _c in "$PWD/.doresiprc" "$HOME/.doresiprc" "$HOME/.config/doresip"; do
+    if [ -r "$_c" ]; then
+      printf %s\\n "$_c"
+      return
+    fi
+  done
+  printf 'No configuration file found\n' >&2
+  return 1
+}
+
+swap() {
+  _res_ip="${1:-$(getconfig reserved_ip)}" || return 1
+  _droplet_id_array="${2:-$(getconfig droplet_ids)}" || return 1
+  _droplet_name_array="${3:-$(getconfig droplet_names)}" || return 1
+
+  _curr_res_ip=""
+  if ! _curr_res_ip=$(do_api "GET" "reserved_ips/$_res_ip"); then
+    >&2 printf 'Error getting reserved ip: %s\n%s\n' \
+      "$_res_ip" "$_curr_res_ip"; return 1
+  fi
+
+  _curr_droplet_id=""
+  if ! _curr_droplet_id=$(\
+      printf %s\\n "$_curr_res_ip" \
+      | "$Jq_Bin" -r .reserved_ip.droplet.id 2>&1\
+      ); then
+    >&2 printf 'Error getting Droplet id\n%s\n' "$_curr_droplet_id"; return 1
+  fi
+
+  _index=""  _swap_id=""
+  # shellcheck disable=2086
+  set -- $_droplet_id_array
+  case "$1" in
+    "$_curr_droplet_id") _swap_id="$2" ; _index=2 ;;
+    *) _swap_id="$1"; _index=1 ;;
+  esac
+
+  # Check that _swap_id exists
+  if ! _droplet_check=$(\
+      do_api "GET" "droplets/$_swap_id"\
+      ); then
+    >&2 printf 'Swap Droplet ID not known: %s\n\nError:\n' \
+      "$_swap_id"  "$_droplet_check"
+    return 1
+  fi
+
+  # shellcheck disable=2086
+  set -- $_droplet_name_array
+  _swap_name="$(array_index "$_index" "$@")" || return 1
+
+  _server_name=""
+  if ! _server_name=$(get_faithbridge_server); then
+    >&2 printf 'Unable to get Faithbridge server name\n%s\n' \
+      "$_server_name"
+    return 1
+  fi
+
+  printf 'Old server is: %s\n' "$_server_name"
+
+  # Swap Droplets
+  if [ "$_swap_name" != "$_server_name" ]; then 
+    >&3 printf 'Swapping %s with %s...\n' "$_swap_name" "$_server_name"
+
+    # Unassign the current Droplet
+    _unassign_data=$(mktemp) || return 1
+    defer rm -rf "$_unassign_data"
+
+    cat << EOF > "$_unassign_data"
+{"type":"unassign"}
+EOF
+
+    _unassign=""
+    if ! _unassign=$(\
+      do_api "POST" "reserved_ips/$_res_ip/actions" "$_unassign_data"\
+      ); then
+      >&2 printf 'Error unassigning droplet\n%s\n' "$_unassign"
+      return 1
+    fi
+
+    # Get action id
+    _action_id=""
+    if ! _action_id=$(printf %s\\n "$_unassign" \
+      | "$Jq_Bin" -r .action.id 2>&1\
+      ); then
+      >&2 printf 'Error getting unassign id\n%s\n' "$_action_id"
+      return 1
+    fi
+
+    sleep 3
+
+    _completed=""
+    while [ "$_completed" != "completed" ]; do
+      _action_status=""
+	    if ! _action_status=$(\
+	      do_api "GET" "reserved_ips/$_res_ip/actions/$_action_id"\
+	      ); then
+	      >&2 printf 'Error getting unassign action status\n%s\n' "$_action_status"
+	      return 1
+	    fi
+
+      _completed=""
+      if ! _completed=$(printf %s\\n "$_action_status" \
+        | "$Jq_Bin" -r .action.status 2>&1\
+        ); then
+        >&2 printf 'Error getting action status\n%s\n' "$_action_status"
+        return 1
+      fi
+      sleep 3
+    done
+
+    >&3 printf 'Successfully unassigned %s\n' "$_res_ip"
+
+    # Assign the new Droplet
+    _assign_data=$(mktemp) || return 1
+    defer rm -rf "$_assign_data"
+
+    cat << EOF > "$_assign_data"
+{"type":"assign","droplet_id":$_swap_id}
+EOF
+
+    if ! _assign=$(\
+      do_api "POST" "reserved_ips/$_res_ip/actions" "$_assign_data"\
+      ); then
+      >&2 printf 'Error assigning new droplet\n%s\n' "$_assign"
+      return 1
+    fi
+
+    # Get action id
+    _action_id=""
+    if ! _action_id=$(printf %s\\n "$_assign" \
+      | "$Jq_Bin" -r .action.id 2>&1\
+      ); then
+      >&2 printf 'Error getting assign id\n%s\n' "$_action_id"
+      return 1
+    fi
+
+    sleep 3
+
+    _completed=""
+    while [ "$_completed" != "completed" ]; do
+      _action_status=""
+	    if ! _action_status=$(\
+	      do_api "GET" "reserved_ips/$_res_ip/actions/$_action_id"\
+	      ); then
+	      >&2 printf 'Error getting assign action status\n%s\n' "$_action_status"
+	      return 1
+	    fi
+
+      _completed=""
+      if ! _completed=$(printf %s\\n "$_action_status" \
+        | "$Jq_Bin" -r .action.status 2>&1\
+        ); then
+        >&2 printf 'Error getting assign status\n%s\n' "$_action_status"
+        return 1
+      fi
+      sleep 3
+    done
+
+    >&3 printf 'Successfully assigned %s to %s\n' "$_swap_name" "$_res_ip"
+
+  fi # end Swap Droplets
+  
+  # Check the server is actually swapped
+  _tries=10
+  while [ "$_swap_name" != "$_server_name" ]; do
+    if [ "$_tries" -eq 0 ]; then
+      >&2 printf 'Error: current server is still %s after 10 attempts\n' \
+        "$_server_name" 
+      return 1
+    fi
+
+    if ! _server_name=$(get_faithbridge_server); then
+      printf 'Error getting Faithbridge server\n%s\n' "$_server_name"
+      return 1
+    fi
+
+    _tries=$(( _tries - 1 ))
+
+    sleep 3
+  done
+
+  printf 'New server is: %s\n' "$_server_name"
+}
+
+main() {
+
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -c|--config) Config_File="$2" ; shift 2 ;;
+      --config=*) Config_File="${2#*=}" ; shift 1 ;;
+      -d|--debug) Debug_Mode=true ; shift 1 ;;
+      -e|--env) { export "${2?}"; } ; shift 2 ;;
+      -v|--verbose) Verbose_Mode=true ; shift 1 ;;
+      *) args="$args $1" ; shift 1 ;;
+    esac
+  done
+
+  "$Debug_Mode" && Verbose_Mode=true
+
+  # shellcheck disable=2086
+  set -- $args
+  
+  case "$1" in
+    swap)
+      if "$Verbose_Mode"; then
+        "$@" 3>&1
+      else
+        "$@" 3>/dev/null
+      fi
+      ;;
+    *) printf %s\\n "$(usage)" >&2 ; return 1 ;;
+  esac
+}
+
+main "$@"
