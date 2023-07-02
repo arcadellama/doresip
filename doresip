@@ -14,7 +14,8 @@ Defer=""
 usage() {
   cat << EOF
 $Prgnam - $Version
-Usage: $Prgnam swap -c|--config=path/to/config
+Usage: $Prgnam swap|check -c|--config=path/to/config -e|--env=
+
 EOF
 }
 
@@ -321,6 +322,15 @@ EOF
   printf 'New server is: %s\n' "$_server_name"
 }
 
+check() {
+  _server_name=""
+  if ! _server_name=$(server_api); then
+    printf 'Error: %s\n' "$_server_name"
+    return 1
+  fi
+  printf %s\\n "$_server_name"
+}
+
 main() {
 
   while [ "$#" -gt 0 ]; do
@@ -340,7 +350,7 @@ main() {
   set -- $args
   
   case "$1" in
-    swap)
+    swap|check)
       if "$Verbose_Mode"; then
         "$@" 3>&1
       else
