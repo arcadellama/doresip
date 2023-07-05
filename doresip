@@ -48,7 +48,7 @@ do_api() {
   defer rm -rf "$_response"
 
   if ! _do_token="${DIGITALOCEAN_TOKEN:-$(getconfig DIGITALOCEAN_TOKEN)}"; then
-    printf 'DIGITALOCEAN_TOKEN unset\n'; return 1
+    >&2 printf 'DIGITALOCEAN_TOKEN unset\n'; return 1
   fi
 
   >&3 printf 'DIGITALOCEAN_TOKEN=%s\n' "$_do_token"
@@ -57,11 +57,11 @@ do_api() {
     GET|PUT) _ret_ok=200 ;;
     POST) _ret_ok=201 ;;
     PATCH|DELETE) _ret_ok=204 ;;
-    *) printf 'Invalid method\n'; return 1 ;;
+    *) >&2 printf 'Invalid method\n'; return 1 ;;
   esac
 
   if [ -z "$_endpoint" ]; then
-    printf 'Endpoint unset\n'; return 1
+    >&2 printf 'Endpoint unset\n'; return 1
   fi
 
   if ! _ret="$("$Curl_Bin" -s \
@@ -72,7 +72,7 @@ do_api() {
     -H "Authorization: Bearer $_do_token" \
     -d "@$_data" \
     "$DO_API/$_endpoint" 2>&1)"; then
-      printf '%s error: %s\n' "$Curl_Bin" "$_ret"
+      >&2 printf '%s error: %s\n' "$Curl_Bin" "$_ret"
       return 1
   fi
 
@@ -95,17 +95,17 @@ server_api() {
   defer rm -rf "$_response"
 
   if ! _server_api_name="${SERVER_API_NAME:-$(getconfig SERVER_API_NAME)}"; then
-    printf 'SERVER_API_NAME unset\n'; return 1
+    >&2 printf 'SERVER_API_NAME unset\n'; return 1
   fi
 
-  >&3 printf 'SERVER_API_NAME=%s\n' "$_do_token"
+  >&3 printf 'SERVER_API_NAME=%s\n' "$_server_api_name"
 
   if ! _ret="$("$Curl_Bin" -s \
     -o "$_response" \
     -w '%{http_code}' \
     -X "$_method" \
     "$_server_api_name" 2>&1)"; then
-    printf '%s error: %s\n' "$Curl_Bin" "$_ret"
+    >&2 printf '%s error: %s\n' "$Curl_Bin" "$_ret"
     return 1
   fi
 
@@ -133,7 +133,7 @@ getconfig() {
       *) continue ;;
     esac
   done < "$_config"
-  >&3 printf 'Unable to get config value for key: %s\n' "$1"
+  >&2 printf 'Unable to get config value for key: %s\n' "$1"
   return 1
 }
 
